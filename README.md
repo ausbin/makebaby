@@ -14,4 +14,6 @@ Supports `Makebabyfile`s in this format:
     program.o: program.c
         gcc -c -o program.o program.c
 
+Run `../makebaby` inside `testbed/` (😉) to test it
+
 Does not check mtimes... yet(???)
