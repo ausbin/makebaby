@@ -2,8 +2,10 @@
 #include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <errno.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <sys/stat.h>
 #include "defs.h"
 
 static size_t cmdbufi;
@@ -12,15 +14,38 @@ static size_t ntargets;
 static target_t targets[MAX_TARGETS];
 static char adjmatrix[MAX_TARGETS][MAX_TARGETS];
 
+static target_t *get_target(const char *name, int create);
 static int parse(void);
-static int topo(void);
+static int topo(target_t *target);
 static int run(void);
 
-int main(void) {
+int main(int argc, char **argv) {
+    char *goal_name = NULL;
+    target_t *goal = NULL;
+
+    if (argc-1 > 1) {
+        fprintf(stderr, "usage: %s [target]\n", argv[0]);
+        goto failure;
+    } else if (argc-1 == 1) {
+        goal_name = argv[1];
+    }
+
     if (parse())
         goto failure;
 
-    if (topo())
+    if (!ntargets) {
+        fprintf(stderr, "no targets in Makebabyfile\n");
+        goto failure;
+    } else if (goal_name) {
+        if (!(goal = get_target(goal_name, 0))) {
+            fprintf(stderr, "no such target %s\n", goal_name);
+            goto failure;
+        }
+    } else {
+        goal = &targets[0];
+    }
+
+    if (topo(goal))
         goto failure;
 
     if (run())
@@ -32,7 +57,7 @@ int main(void) {
     return 1;
 }
 
-static target_t *get_target(const char *name) {
+static target_t *get_target(const char *name, int create) {
     target_t *target = NULL;
     for (size_t i = 0; i < ntargets; i++) {
         if (!strcmp(name, targets[i].name)) {
@@ -40,7 +65,7 @@ static target_t *get_target(const char *name) {
         }
     }
 
-    if (!target) {
+    if (!target && create) {
         if (strlen(name) > MAX_TARGET_NAME) {
             fprintf(stderr, "target name exceeds max of %d chars\n",
                             MAX_TARGET_NAME);
@@ -89,7 +114,7 @@ static int parse(void) {
                 // empty line, that's fine
             } else if (token.type == TOKEN_WORD) {
                 // cool, a new(?) target!
-                if (!(target = get_target(token.token)))
+                if (!(target = get_target(token.token, 1)))
                     goto failure;
 
                 state = STATE_WANT_COLON;
@@ -127,7 +152,7 @@ static int parse(void) {
         } else if (state == STATE_DEPS) {
             if (token.type == TOKEN_WORD) {
                 target_t *dep;
-                if (!(dep = get_target(token.token)))
+                if (!(dep = get_target(token.token, 1)))
                     goto failure;
 
                 // Mark edge from target -> dep
@@ -195,11 +220,31 @@ static int topo_visit(target_t *target) {
         fprintf(stderr, "cycle detected: %s depends on itself\n", target->name);
         return 1;
     }
+
+    struct stat statbuf;
+    if (stat(target->name, &statbuf) == -1) {
+        if (errno == ENOENT) {
+            target->mtime = -1;
+            target->marks |= MARK_OUTDATED;
+        } else {
+            fprintf(stderr, "stat(\"%s\"): %s\n", target->name, strerror(errno));
+            return 1;
+        }
+    } else {
+        target->mtime = statbuf.st_mtime;
+    }
+
     target->marks |= MARK_TEMP;
 
-    for (size_t i = 0; i < ntargets; i++)
-        if (adjmatrix[target->idx][i])
-            topo_visit(&targets[i]);
+    for (size_t i = 0; i < ntargets; i++) {
+        if (adjmatrix[target->idx][i]) {
+            target_t *dep = &targets[i];
+            topo_visit(dep);
+            if (!(target->marks & MARK_OUTDATED) &&
+                    (dep->marks & MARK_OUTDATED || dep->mtime > target->mtime))
+                target->marks |= MARK_OUTDATED;
+        }
+    }
 
     target->marks &= ~MARK_TEMP;
     target->marks |= MARK_PERM;
@@ -211,26 +256,24 @@ static int topo_visit(target_t *target) {
 static int topo_target_compare(const void *leftp, const void *rightp) {
     const target_t *left = (const target_t *) leftp;
     const target_t *right = (const target_t *) rightp;
-    return (int)left->order - (int)right->order;
+
+    int left_reachable = left->marks & MARK_PERM;
+    int right_reachable = right->marks & MARK_PERM;
+    if (!left_reachable && !right_reachable) {
+        return 0;
+    } else if (!left_reachable && right_reachable) {
+        return 1;
+    } else if (left_reachable && !right_reachable) {
+        return -1;
+    } else {
+        return (int)left->order - (int)right->order;
+    }
 }
 
 // https://en.wikipedia.org/wiki/Topological_sorting#Depth-first_search
-static int topo(void) {
-    while (1) {
-        target_t *target = NULL;
-        for (size_t i = 0; i < ntargets; i++) {
-            if (!(targets[i].marks & MARK_PERM)) {
-                target = &targets[i];
-                break;
-            }
-        }
-
-        if (!target)
-            break;
-
-        if (topo_visit(target))
-            goto failure;
-    }
+static int topo(target_t *target) {
+    if (topo_visit(target))
+        goto failure;
 
     qsort(targets, ntargets, sizeof (target_t), topo_target_compare);
 
@@ -243,8 +286,11 @@ static int topo(void) {
 static char *args[MAX_ARGS + 1];
 
 static int run(void) {
-    for (size_t i = 0; i < ntargets; i++) {
+    for (size_t i = 0; i < ntargets && targets[i].marks & MARK_PERM; i++) {
         target_t *target = &targets[i];
+
+        if (!(target->marks & MARK_OUTDATED))
+            continue;
 
         for (size_t j = 0; j < target->ncmds; j++) {
             command_t *cmd = &target->cmds[j];

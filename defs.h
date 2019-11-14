@@ -1,6 +1,8 @@
 #ifndef DEFS_H
 #define DEFS_H
 
+#include <time.h>
+
 // makebaby.c
 #define MAX_CMDBUF 0x1000
 #define MAX_TARGETS 64
@@ -16,12 +18,14 @@ typedef struct {
 enum {
     MARK_PERM = 1 << 0,
     MARK_TEMP = 1 << 1,
+    MARK_OUTDATED = 1 << 2,
 };
 
 typedef struct {
     size_t idx;
     size_t order;
     unsigned char marks;
+    time_t mtime;
     char name[MAX_TARGET_NAME + 1];
     size_t ncmds;
     command_t cmds[MAX_CMDS];

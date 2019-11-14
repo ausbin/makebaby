@@ -1,8 +1,11 @@
-lib.o: lib.c
-	gcc -c -o lib.o lib.c
-
 program: program.o lib.o
 	gcc -o program program.o lib.o
 
-program.o: program.c
+lib.o: lib.c lib.h
+	gcc -c -o lib.o lib.c
+
+program.o: program.c lib.h
 	gcc -c -o program.o program.c
+
+clean:
+	rm -f program program.o lib.o
