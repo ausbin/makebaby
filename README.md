@@ -1,7 +1,7 @@
-Make Baby
+Baby Make 
 =========
 
-The shittiest make of all time.
+The most primitive make of all time.
 
 Supports `Makebabyfile`s in this format:
 
@@ -14,6 +14,6 @@ Supports `Makebabyfile`s in this format:
     program.o: program.c
         gcc -c -o program.o program.c
 
-Run `../makebaby` inside `testbed/` (😉) to test it
+Run `../makebaby` inside `testbed/` (no comment) to test it
 
 Does not check mtimes... yet(???)

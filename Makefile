@@ -1,6 +1,5 @@
 PROG = makebaby
 CC = gcc
-# Need to use -isystem here to ignore warnings in elfutils headers
 CFLAGS = -g -pedantic -Wall -Werror -Wextra \
          -Wstrict-prototypes -Wold-style-definition \
 		 -std=c99 
